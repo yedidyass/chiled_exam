@@ -1,0 +1,76 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # מנקה רווחים/שורות חדשות וקידומת "Bearer" שנכנסו בטעות בהדבקת הסוד,
+      # ומזהה Global API Key (שלא מתאים כאן) — בלי להדפיס את הערך עצמו.
+      - name: Check Cloudflare token
+        env:
+          RAW_TOKEN: ${{ secrets.CF_API }}
+        run: |
+          token="$(printf '%s' "$RAW_TOKEN" | tr -d '[:space:]')"
+          token="${token#Bearer}"
+          token="${token#bearer}"
+          if [ -z "$token" ]; then
+            echo "::error::Missing repository secret CF_API (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          if [ "${#RAW_TOKEN}" != "${#token}" ]; then
+            echo "::warning::CF_API contained whitespace or a 'Bearer' prefix — stripped it. Consider re-saving the secret."
+          fi
+          if printf '%s' "$token" | grep -Eq '^[0-9a-f]{37}$'; then
+            echo "::error::CF_API looks like a Global API Key. Create an API Token instead: Cloudflare dashboard → My Profile → API Tokens → Create Token (template: Edit Cloudflare Workers, plus D1 Edit)."
+            exit 1
+          fi
+          if printf '%s' "$token" | grep -Eq '^[0-9a-f]{32}$'; then
+            echo "::error::CF_API looks like an Account ID / Zone ID (32 hex chars), not an API Token. Create one: Cloudflare dashboard → My Profile → API Tokens → Create Token (template: Edit Cloudflare Workers, plus D1 Edit), and save it as CF_API."
+            exit 1
+          fi
+          if ! printf '%s' "$token" | grep -Eq '^[A-Za-z0-9_-]+$'; then
+            echo "::error::CF_API contains unexpected characters (length ${#token}). Re-copy the API Token from Cloudflare and save it again."
+            exit 1
+          fi
+          echo "CLOUDFLARE_API_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "Token format OK (length ${#token})"
+
+      # אופציונלי: נחוץ רק אם לטוקן יש גישה ליותר מחשבון Cloudflare אחד
+      - name: Cloudflare account (optional)
+        env:
+          ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          if [ -n "$ACCOUNT_ID" ]; then echo "CLOUDFLARE_ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"; fi
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+      - name: Ensure D1 database
+        run: node scripts/ensure-d1.mjs
+
+      - name: Apply D1 migrations
+        run: npx wrangler d1 migrations apply DB --remote
+
+      - name: Deploy Worker
+        run: npx wrangler deploy
