@@ -1,5 +1,6 @@
 import type { Exam, Snapshot } from '../../shared/types';
 import { formatShort } from '../dates';
+import KidAvatar from './KidAvatar';
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const fmt = (n: number | null) => (n === null ? '—' : Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -28,7 +29,7 @@ export default function StatsView({ snap }: { snap: Snapshot }) {
         return (
           <section key={k.id} className="stat-card" style={{ ['--kid' as string]: k.color }}>
             <div className="stat-head">
-              <span className="kid-badge">{k.emoji || k.name.slice(0, 1)}</span>
+              <KidAvatar kid={k} />
               <div>
                 <h3>{k.name}</h3>
                 <span className="muted">{mine.length} ציונים</span>

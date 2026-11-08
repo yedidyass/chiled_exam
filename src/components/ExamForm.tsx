@@ -6,6 +6,7 @@ import type { Actions } from '../App';
 import { addDays, formatDay, startOfWeek, todayISO } from '../dates';
 import { STATUS_LABEL, TYPE_LABEL } from '../labels';
 import Sheet from './Sheet';
+import KidAvatar from './KidAvatar';
 
 export interface ExamDraft {
   exam?: Exam;
@@ -83,7 +84,7 @@ export default function ExamForm({ snap, draft, actions, onClose }: { snap: Snap
                 style={{ ['--kid' as string]: k.color }}
                 onClick={() => setChildId(k.id)}
               >
-                <span className="kid-emoji">{k.emoji || k.name.slice(0, 1)}</span>
+                <KidAvatar kid={k} size={30} />
                 {k.name}
               </button>
             ))}

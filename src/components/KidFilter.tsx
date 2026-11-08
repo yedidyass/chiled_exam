@@ -1,4 +1,5 @@
 import type { Child } from '../../shared/types';
+import KidAvatar from './KidAvatar';
 
 export default function KidFilter({ kids, value, onChange }: { kids: Child[]; value: string | null; onChange: (id: string | null) => void }) {
   if (kids.length < 2) return null;
@@ -14,7 +15,8 @@ export default function KidFilter({ kids, value, onChange }: { kids: Child[]; va
           style={{ ['--kid' as string]: k.color }}
           onClick={() => onChange(value === k.id ? null : k.id)}
         >
-          {k.emoji} {k.name}
+          <KidAvatar kid={k} size={22} />
+          {k.name}
         </button>
       ))}
     </div>
