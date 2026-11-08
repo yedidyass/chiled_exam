@@ -79,4 +79,8 @@ export const api = {
   addExam: (e: ExamInput) => req<Exam>('POST', '/exams', e),
   updateExam: (id: string, e: ExamInput) => req<Exam>('PUT', `/exams/${id}`, e),
   deleteExam: (id: string) => req<void>('DELETE', `/exams/${id}`),
+  pushKey: () => req<{ publicKey: string }>('GET', '/push/key'),
+  pushSubscribe: (sub: PushSubscriptionJSON) => req<{ ok: true }>('POST', '/push/subscribe', sub),
+  pushUnsubscribe: (endpoint: string) => req<void>('POST', '/push/unsubscribe', { endpoint }),
+  pushTest: (endpoint: string) => req<{ status: number }>('POST', '/push/test', { endpoint }),
 };
