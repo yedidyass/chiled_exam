@@ -9,6 +9,7 @@ import StatsView from './components/StatsView';
 import KidsView from './components/KidsView';
 import SettingsView from './components/SettingsView';
 import ExamForm from './components/ExamForm';
+import { currentSubscription } from './push';
 import type { ExamDraft } from './components/ExamForm';
 
 type Tab = 'home' | 'calendar' | 'stats' | 'kids' | 'settings';
@@ -91,6 +92,14 @@ export default function App() {
       } else setOffline(true);
     }
   }, [logout, showToast]);
+
+  // מרענן את שיוך המנוי למשפחה (למשל אחרי הצטרפות מקישור או חידוש מנוי ע"י הדפדפן)
+  useEffect(() => {
+    if (!token) return;
+    currentSubscription()
+      .then((sub) => sub && api.pushSubscribe(sub.toJSON()))
+      .catch(() => {});
+  }, [token]);
 
   // טעינה ראשונית + רענון כשחוזרים לאפליקציה וכל דקה (סנכרון בין ההורים).
   useEffect(() => {

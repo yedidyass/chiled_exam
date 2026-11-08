@@ -2,8 +2,15 @@ import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
 import { EXAM_STATUSES, EXAM_TYPES } from '../shared/types';
 import type { Child, Exam, ExamStatus, ExamType } from '../shared/types';
+import { getVapid, isPushEndpoint, sendPush } from './push';
+import type { PushMessage, Subscription } from './push';
+import { dailyMessage, dailyWindow, israelToday, weeklyMessage, weeklyWindow } from './reminders';
+import type { ReminderExam } from './reminders';
 
 type Env = { DB: D1Database; ASSETS: Fetcher };
+
+/** ה-subject של VAPID: כתובת יצירת קשר של מפעיל השרת. */
+const VAPID_SUBJECT = 'https://github.com/yedidyass/chiled_exam';
 type Vars = { familyId: string };
 type AppCtx = Context<{ Bindings: Env; Variables: Vars }>;
 
@@ -100,6 +107,7 @@ app.use('/children/*', auth);
 app.use('/children', auth);
 app.use('/exams/*', auth);
 app.use('/exams', auth);
+app.use('/push/*', auth);
 
 // כל הנתונים של המשפחה בבקשה אחת — משפחה קטנה, אין צורך בדפדוף.
 app.get('/me', async (c) => {
@@ -223,6 +231,97 @@ app.delete('/exams/:id', async (c) => {
   return c.body(null, 204);
 });
 
+// ---------- התראות push ----------
+
+app.get('/push/key', async (c) => c.json({ publicKey: (await getVapid(c.env.DB)).publicKey }));
+
+function subInput(b: Record<string, unknown>): Subscription {
+  const endpoint = str(b.endpoint, 'endpoint', 1000);
+  if (!isPushEndpoint(endpoint)) throw new BadRequest('unsupported push service');
+  const keys = (b.keys ?? {}) as Record<string, unknown>;
+  return { endpoint, p256dh: str(keys.p256dh, 'p256dh', 200), auth: str(keys.auth, 'auth', 100) };
+}
+
+app.post('/push/subscribe', async (c) => {
+  const sub = subInput(await body(c));
+  await c.env.DB.prepare(
+    `INSERT INTO push_subscriptions (endpoint, family_id, p256dh, auth) VALUES (?, ?, ?, ?)
+     ON CONFLICT(endpoint) DO UPDATE SET family_id = excluded.family_id, p256dh = excluded.p256dh, auth = excluded.auth`,
+  )
+    .bind(sub.endpoint, c.get('familyId'), sub.p256dh, sub.auth)
+    .run();
+  return c.json({ ok: true });
+});
+
+app.post('/push/unsubscribe', async (c) => {
+  const endpoint = str((await body(c)).endpoint, 'endpoint', 1000);
+  await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND family_id = ?').bind(endpoint, c.get('familyId')).run();
+  return c.body(null, 204);
+});
+
+app.post('/push/test', async (c) => {
+  const endpoint = str((await body(c)).endpoint, 'endpoint', 1000);
+  const sub = await c.env.DB.prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE endpoint = ? AND family_id = ?')
+    .bind(endpoint, c.get('familyId'))
+    .first<Subscription>();
+  if (!sub) return c.json({ error: 'not subscribed' }, 404);
+  const status = await sendPush(sub, { title: 'התראות פועלות ✓', body: 'תקבלו תזכורת ערב לפני כל מבחן.', tag: 'test', url: '/' }, await getVapid(c.env.DB), VAPID_SUBJECT);
+  if (status === 404 || status === 410) await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(endpoint).run();
+  return c.json({ status }, status >= 200 && status < 300 ? 200 : 502);
+});
+
 app.notFound((c) => c.json({ error: 'not found' }, 404));
 
-export default app;
+// ---------- תזכורות מתוזמנות (Cron Triggers, ראו wrangler.jsonc) ----------
+
+const WEEKLY_CRON = '30 5 * * SUN';
+
+async function sendReminders(env: Env, kind: 'daily' | 'weekly', now = new Date()) {
+  const today = israelToday(now);
+  const { from, to } = kind === 'weekly' ? weeklyWindow(today) : dailyWindow(today);
+  const { results: exams } = await env.DB.prepare(
+    `SELECT e.family_id, e.date, e.subject, e.type, e.status, c.name AS child_name, c.emoji
+       FROM exams e JOIN children c ON c.id = e.child_id
+      WHERE e.date BETWEEN ? AND ? AND e.score IS NULL
+        AND e.family_id IN (SELECT DISTINCT family_id FROM push_subscriptions)
+      ORDER BY e.date, c.sort_order`,
+  )
+    .bind(from, to)
+    .all<ReminderExam>();
+  if (!exams.length) return;
+
+  const byFamily = new Map<string, ReminderExam[]>();
+  for (const e of exams) byFamily.set(e.family_id, [...(byFamily.get(e.family_id) ?? []), e]);
+
+  const vapid = await getVapid(env.DB);
+  const dead: string[] = [];
+  let sent = 0;
+  for (const [familyId, list] of byFamily) {
+    const msg: PushMessage | null = kind === 'weekly' ? weeklyMessage(list, today) : dailyMessage(list, today);
+    if (!msg) continue;
+    const { results: subs } = await env.DB.prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE family_id = ?')
+      .bind(familyId)
+      .all<Subscription>();
+    await Promise.all(
+      subs.map(async (s) => {
+        try {
+          const status = await sendPush(s, msg, vapid, VAPID_SUBJECT);
+          if (status === 404 || status === 410) dead.push(s.endpoint);
+          else if (status >= 200 && status < 300) sent++;
+          else console.warn('push failed', status, new URL(s.endpoint).host);
+        } catch (err) {
+          console.error('push error', err);
+        }
+      }),
+    );
+  }
+  if (dead.length) await env.DB.batch(dead.map((e) => env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(e)));
+  console.log(`${kind} reminders: ${sent} sent, ${dead.length} expired subscriptions removed`);
+}
+
+export default {
+  fetch: app.fetch,
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(sendReminders(env, controller.cron === WEEKLY_CRON ? 'weekly' : 'daily', new Date(controller.scheduledTime)));
+  },
+} satisfies ExportedHandler<Env>;
