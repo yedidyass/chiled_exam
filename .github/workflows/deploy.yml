@@ -39,6 +39,10 @@ jobs:
             echo "::error::CF_API looks like a Global API Key. Create an API Token instead: Cloudflare dashboard → My Profile → API Tokens → Create Token (template: Edit Cloudflare Workers, plus D1 Edit)."
             exit 1
           fi
+          if printf '%s' "$token" | grep -Eq '^[0-9a-f]{32}$'; then
+            echo "::error::CF_API looks like an Account ID / Zone ID (32 hex chars), not an API Token. Create one: Cloudflare dashboard → My Profile → API Tokens → Create Token (template: Edit Cloudflare Workers, plus D1 Edit), and save it as CF_API."
+            exit 1
+          fi
           if ! printf '%s' "$token" | grep -Eq '^[A-Za-z0-9_-]+$'; then
             echo "::error::CF_API contains unexpected characters (length ${#token}). Re-copy the API Token from Cloudflare and save it again."
             exit 1
