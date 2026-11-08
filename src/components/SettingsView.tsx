@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { renderSVG } from 'uqr';
 import type { Snapshot } from '../../shared/types';
 import type { Actions } from '../App';
 import { ApiError } from '../api';
@@ -99,7 +100,19 @@ export default function SettingsView({
   showToast: (m: string) => void;
 }) {
   const [name, setName] = useState(snap.family.name);
+  const [showQr, setShowQr] = useState(false);
   const link = `${location.origin}/#join=${token}`;
+  // הברקוד תמיד כהה על רקע לבן (גם במצב כהה) כדי שמצלמות יזהו אותו
+  const qrSrc = useMemo(() => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(renderSVG(link, { border: 2 })), [link]);
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(token);
+      showToast('הקוד הועתק');
+    } catch {
+      prompt('העתיקו את הקוד:', token);
+    }
+  }
 
   async function share() {
     const data = { title: 'מבחנים בבית', text: `הצטרפות למעקב המבחנים של ${snap.family.name}`, url: link };
@@ -142,9 +155,29 @@ export default function SettingsView({
         <p className="muted">
           שלחו את הקישור. מי שפותח אותו רואה ועורך את אותם מבחנים. הקישור הוא המפתח למידע, לכן שתפו אותו רק עם מי שצריך.
         </p>
-        <button className="btn primary wide" onClick={share}>
-          שיתוף קישור הצטרפות
-        </button>
+        <div className="share-actions">
+          <button className="btn primary wide" onClick={share}>
+            שיתוף קישור הצטרפות
+          </button>
+          <button className="btn wide" onClick={() => setShowQr((v) => !v)} aria-expanded={showQr}>
+            {showQr ? 'הסתרת הברקוד' : 'הצגת ברקוד לסריקה'}
+          </button>
+        </div>
+        {showQr && (
+          <div className="qr-panel">
+            <img className="qr" src={qrSrc} alt="ברקוד הצטרפות למשפחה" width={240} height={240} />
+            <p className="muted">סרקו עם המצלמה של הטלפון השני ולחצו על הקישור שמופיע.</p>
+            <p className="muted small">
+              אם האפליקציה כבר מותקנת שם (במיוחד באייפון), פתחו אותה, בחרו "הצטרפות" והדביקו את הקוד:
+            </p>
+            <div className="code-row">
+              <code dir="ltr">{token}</code>
+              <button className="btn small" onClick={copyCode}>
+                העתקה
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card">
