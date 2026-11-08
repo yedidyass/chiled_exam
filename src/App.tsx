@@ -10,6 +10,7 @@ import KidsView from './components/KidsView';
 import SettingsView from './components/SettingsView';
 import ExamForm from './components/ExamForm';
 import { currentSubscription } from './push';
+import { clearPhotos, rememberUploaded } from './photos';
 import type { ExamDraft } from './components/ExamForm';
 
 type Tab = 'home' | 'calendar' | 'stats' | 'kids' | 'settings';
@@ -25,7 +26,8 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 export interface Actions {
   saveExam: (id: string | null, input: ExamInput) => Promise<boolean>;
   deleteExam: (id: string) => Promise<boolean>;
-  saveChild: (id: string | null, input: ChildInput) => Promise<boolean>;
+  saveChild: (id: string | null, input: ChildInput) => Promise<Child | null>;
+  setChildPhoto: (id: string, photo: Blob | null) => Promise<boolean>;
   deleteChild: (id: string) => Promise<boolean>;
   renameFamily: (name: string) => Promise<boolean>;
   openExam: (draft: ExamDraft) => void;
@@ -74,6 +76,7 @@ export default function App() {
   const logout = useCallback(() => {
     setToken(null);
     cacheSnapshot(null);
+    clearPhotos();
     setTok(null);
     setSnap(null);
   }, []);
@@ -147,13 +150,23 @@ export default function App() {
           await api.deleteExam(id);
           update((s) => ({ ...s, exams: s.exams.filter((x) => x.id !== id) }));
         }, 'נמחק'),
-      saveChild: (id, input) =>
-        attempt(async () => {
-          const saved: Child = id ? await api.updateChild(id, input) : await api.addChild(input);
+      saveChild: async (id, input) => {
+        let saved: Child | null = null;
+        await attempt(async () => {
+          const c: Child = id ? await api.updateChild(id, input) : await api.addChild(input);
+          saved = c;
           update((s) => ({
             ...s,
-            children: id ? s.children.map((x) => (x.id === id ? saved : x)) : [...s.children, saved],
+            children: id ? s.children.map((x) => (x.id === id ? c : x)) : [...s.children, c],
           }));
+        });
+        return saved;
+      },
+      setChildPhoto: (id, photo) =>
+        attempt(async () => {
+          const { photo_v } = photo ? await api.putPhoto(id, photo) : await api.deletePhoto(id);
+          if (photo) await rememberUploaded({ id, photo_v }, photo);
+          update((s) => ({ ...s, children: s.children.map((x) => (x.id === id ? { ...x, photo_v } : x)) }));
         }),
       deleteChild: (id) =>
         attempt(async () => {

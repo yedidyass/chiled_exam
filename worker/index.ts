@@ -115,7 +115,7 @@ app.get('/me', async (c) => {
   const [family, children, exams] = await c.env.DB.batch([
     c.env.DB.prepare('SELECT id, name FROM families WHERE id = ?').bind(fid),
     c.env.DB.prepare(
-      'SELECT id, name, grade, color, emoji, sort_order FROM children WHERE family_id = ? ORDER BY sort_order, created_at',
+      'SELECT id, name, grade, color, emoji, sort_order, photo_v FROM children WHERE family_id = ? ORDER BY sort_order, created_at',
     ).bind(fid),
     c.env.DB.prepare(
       'SELECT id, child_id, subject, date, type, topics, status, score FROM exams WHERE family_id = ? ORDER BY date, created_at',
@@ -153,19 +153,77 @@ app.post('/children', async (c) => {
   )
     .bind(id, c.get('familyId'), input.name, input.grade, input.color, input.emoji, input.sort_order)
     .run();
-  return c.json({ id, ...input } satisfies Child, 201);
+  return c.json({ id, ...input, photo_v: 0 } satisfies Child, 201);
 });
 
 app.put('/children/:id', async (c) => {
   const input = childInput(await body(c));
   const id = c.req.param('id');
-  const res = await c.env.DB.prepare(
-    'UPDATE children SET name = ?, grade = ?, color = ?, emoji = ?, sort_order = ? WHERE id = ? AND family_id = ?',
+  const row = await c.env.DB.prepare(
+    `UPDATE children SET name = ?, grade = ?, color = ?, emoji = ?, sort_order = ? WHERE id = ? AND family_id = ?
+     RETURNING id, name, grade, color, emoji, sort_order, photo_v`,
   )
     .bind(input.name, input.grade, input.color, input.emoji, input.sort_order, id, c.get('familyId'))
-    .run();
-  if (!res.meta.changes) return c.json({ error: 'not found' }, 404);
-  return c.json({ id, ...input } satisfies Child);
+    .first<Child>();
+  if (!row) return c.json({ error: 'not found' }, 404);
+  return c.json(row);
+});
+
+// ---------- תמונת ילד ----------
+
+const MAX_PHOTO_BYTES = 300 * 1024;
+
+/** מזהה את סוג התמונה לפי תוכן הקובץ (לא סומכים על Content-Type מהלקוח). */
+function sniffImage(b: Uint8Array): string | null {
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  const ascii = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to));
+  if (b.length > 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+app.get('/children/:id/photo', async (c) => {
+  const row = await c.env.DB.prepare('SELECT mime, data FROM child_photos WHERE child_id = ? AND family_id = ?')
+    .bind(c.req.param('id'), c.get('familyId'))
+    .first<{ mime: string; data: ArrayBuffer | number[] }>();
+  if (!row) return c.json({ error: 'not found' }, 404);
+  const bytes = row.data instanceof ArrayBuffer ? new Uint8Array(row.data) : new Uint8Array(row.data);
+  return c.body(bytes, 200, {
+    'Content-Type': row.mime,
+    'Cache-Control': 'private, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff',
+  });
+});
+
+app.put('/children/:id/photo', async (c) => {
+  const id = c.req.param('id');
+  const fid = c.get('familyId');
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (!bytes.length) throw new BadRequest('empty image');
+  if (bytes.length > MAX_PHOTO_BYTES) throw new BadRequest('image too large');
+  const mime = sniffImage(bytes);
+  if (!mime) throw new BadRequest('unsupported image');
+  const owns = await c.env.DB.prepare('SELECT 1 FROM children WHERE id = ? AND family_id = ?').bind(id, fid).first();
+  if (!owns) return c.json({ error: 'not found' }, 404);
+  const v = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO child_photos (child_id, family_id, mime, data) VALUES (?, ?, ?, ?)
+       ON CONFLICT(child_id) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = datetime('now')`,
+    ).bind(id, fid, mime, bytes),
+    c.env.DB.prepare('UPDATE children SET photo_v = ? WHERE id = ? AND family_id = ?').bind(v, id, fid),
+  ]);
+  return c.json({ photo_v: v });
+});
+
+app.delete('/children/:id/photo', async (c) => {
+  const id = c.req.param('id');
+  const fid = c.get('familyId');
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM child_photos WHERE child_id = ? AND family_id = ?').bind(id, fid),
+    c.env.DB.prepare('UPDATE children SET photo_v = 0 WHERE id = ? AND family_id = ?').bind(id, fid),
+  ]);
+  return c.json({ photo_v: 0 });
 });
 
 app.delete('/children/:id', async (c) => {
@@ -173,6 +231,7 @@ app.delete('/children/:id', async (c) => {
   const fid = c.get('familyId');
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM exams WHERE child_id = ? AND family_id = ?').bind(id, fid),
+    c.env.DB.prepare('DELETE FROM child_photos WHERE child_id = ? AND family_id = ?').bind(id, fid),
     c.env.DB.prepare('DELETE FROM children WHERE id = ? AND family_id = ?').bind(id, fid),
   ]);
   return c.body(null, 204);

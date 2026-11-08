@@ -16,6 +16,8 @@ export interface Child {
   color: string;
   emoji: string;
   sort_order: number;
+  /** 0 = אין תמונה; אחרת גרסת התמונה (חותמת זמן) */
+  photo_v: number;
 }
 
 export interface Exam {
