@@ -79,6 +79,7 @@ export const api = {
   createFamily: (name: string) => req<{ token: string; family: Family }>('POST', '/family', { name }),
   me: () => req<Snapshot>('GET', '/me'),
   renameFamily: (name: string) => req<Family>('PUT', '/me', { name }),
+  deleteFamily: () => req<void>('DELETE', '/me'),
   addChild: (c: ChildInput) => req<Child>('POST', '/children', c),
   updateChild: (id: string, c: ChildInput) => req<Child>('PUT', `/children/${id}`, c),
   deleteChild: (id: string) => req<void>('DELETE', `/children/${id}`),

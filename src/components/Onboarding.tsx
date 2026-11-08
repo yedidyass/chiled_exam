@@ -3,7 +3,15 @@ import type { FormEvent } from 'react';
 import type { Snapshot } from '../../shared/types';
 import { api, ApiError } from '../api';
 
-export default function Onboarding({ onCreated, onJoin }: { onCreated: (token: string, s: Snapshot) => void; onJoin: (code: string) => void }) {
+export default function Onboarding({
+  notice,
+  onCreated,
+  onJoin,
+}: {
+  notice?: string | null;
+  onCreated: (token: string, s: Snapshot) => void;
+  onJoin: (code: string) => void;
+}) {
   const [mode, setMode] = useState<'create' | 'join'>('create');
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
@@ -37,6 +45,11 @@ export default function Onboarding({ onCreated, onJoin }: { onCreated: (token: s
       <img src="/icon.svg" alt="" width={88} height={88} />
       <h1>מבחנים בבית</h1>
       <p className="muted">כל המבחנים של כל הילדים, במקום אחד.</p>
+      {notice && (
+        <p className="notice" role="status">
+          {notice}
+        </p>
+      )}
 
       <div className="segmented">
         <button className={mode === 'create' ? 'on' : ''} onClick={() => (setMode('create'), setErr(''))}>

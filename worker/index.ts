@@ -124,6 +124,20 @@ app.get('/me', async (c) => {
   return c.json({ family: family.results[0], children: children.results, exams: exams.results });
 });
 
+// מחיקת המשפחה וכל הנתונים שלה. כל המכשירים המחוברים יקבלו 401 בבקשה הבאה.
+app.delete('/me', async (c) => {
+  const fid = c.get('familyId');
+  // מוחקים במפורש (ולא רק דרך ON DELETE CASCADE) כדי לא להיות תלויים בהגדרות ה-foreign keys
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM push_subscriptions WHERE family_id = ?').bind(fid),
+    c.env.DB.prepare('DELETE FROM child_photos WHERE family_id = ?').bind(fid),
+    c.env.DB.prepare('DELETE FROM exams WHERE family_id = ?').bind(fid),
+    c.env.DB.prepare('DELETE FROM children WHERE family_id = ?').bind(fid),
+    c.env.DB.prepare('DELETE FROM families WHERE id = ?').bind(fid),
+  ]);
+  return c.body(null, 204);
+});
+
 app.put('/me', async (c) => {
   const b = await body(c);
   const name = str(b.name, 'name', 60);

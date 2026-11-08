@@ -56,6 +56,7 @@ export default function App() {
   const [draft, setDraft] = useState<ExamDraft | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
   const showToast = useCallback((msg: string) => {
@@ -73,7 +74,8 @@ export default function App() {
     });
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback((message?: string) => {
+    setNotice(message ?? null);
     setToken(null);
     cacheSnapshot(null);
     clearPhotos();
@@ -90,11 +92,14 @@ export default function App() {
       setOffline(false);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        showToast('קוד המשפחה לא תקין');
-        logout();
+        // המשפחה נמחקה ממכשיר אחר, או שהקוד שגוי. ההתראות במכשיר הזה כבר לא שייכות לשום משפחה.
+        currentSubscription()
+          .then((sub) => sub?.unsubscribe())
+          .catch(() => {});
+        logout('המשפחה לא נמצאה. ייתכן שהיא נמחקה, או שקוד ההצטרפות שגוי.');
       } else setOffline(true);
     }
-  }, [logout, showToast]);
+  }, [logout]);
 
   // מרענן את שיוך המנוי למשפחה (למשל אחרי הצטרפות מקישור או חידוש מנוי ע"י הדפדפן)
   useEffect(() => {
@@ -190,6 +195,7 @@ export default function App() {
   if (!token) {
     return (
       <Onboarding
+        notice={notice}
         onCreated={(t, s) => {
           setToken(t);
           cacheSnapshot(s);
@@ -237,7 +243,7 @@ export default function App() {
         {tab === 'calendar' && <CalendarView snap={snap} actions={actions} />}
         {tab === 'stats' && <StatsView snap={snap} />}
         {tab === 'kids' && <KidsView snap={snap} actions={actions} />}
-        {tab === 'settings' && <SettingsView snap={snap} token={token} actions={actions} onLogout={logout} showToast={showToast} />}
+        {tab === 'settings' && <SettingsView snap={snap} token={token} actions={actions} onLogout={() => logout()} onDeleted={() => logout('המשפחה נמחקה.')} showToast={showToast} />}
       </main>
 
       {!noKids && tab !== 'settings' && tab !== 'kids' && (

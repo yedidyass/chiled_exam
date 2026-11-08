@@ -277,3 +277,14 @@ textarea { resize: vertical; }
   flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 8px 10px; border-radius: 8px;
   background: var(--surface-2); font-size: 0.85rem; text-align: left;
 }
+
+/* ---------- danger zone ---------- */
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.form-actions .btn.danger { flex: 1; padding: 13px; }
+.danger-card { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.danger-card h3 { color: var(--danger); }
+.warning {
+  margin: 0; padding: 12px; border-radius: 10px; font-size: 0.92rem;
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border));
+}
+.notice { margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--surface-2); width: 100%; }
