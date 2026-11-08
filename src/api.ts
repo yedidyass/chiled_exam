@@ -61,6 +61,13 @@ async function send(method: string, path: string, body?: BodyInit, contentType =
     let msg = 'משהו השתבש, נסו שוב';
     if (res.status === 401) msg = 'קוד המשפחה לא תקין';
     if (res.status === 400 && path.endsWith('/photo')) msg = 'לא הצלחנו להעלות את התמונה';
+    // הודעה ידידותית מהשרת (למשל תקרות או הרשמה סגורה)
+    try {
+      const data = (await res.json()) as { message?: unknown };
+      if (typeof data.message === 'string' && data.message) msg = data.message;
+    } catch {
+      /* אין גוף JSON */
+    }
     throw new ApiError(res.status, msg);
   }
   return res;
@@ -76,6 +83,7 @@ export type ChildInput = Omit<Child, 'id' | 'photo_v'>;
 export type ExamInput = Omit<Exam, 'id'>;
 
 export const api = {
+  config: () => req<{ signupOpen: boolean }>('GET', '/config'),
   createFamily: (name: string) => req<{ token: string; family: Family }>('POST', '/family', { name }),
   me: () => req<Snapshot>('GET', '/me'),
   renameFamily: (name: string) => req<Family>('PUT', '/me', { name }),

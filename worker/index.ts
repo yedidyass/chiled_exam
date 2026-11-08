@@ -7,7 +7,18 @@ import type { PushMessage, Subscription } from './push';
 import { dailyMessage, dailyWindow, israelToday, weeklyMessage, weeklyWindow } from './reminders';
 import type { ReminderExam } from './reminders';
 
-type Env = { DB: D1Database; ASSETS: Fetcher };
+type Env = {
+  DB: D1Database;
+  ASSETS: Fetcher;
+  /** "true" = מותר ליצור משפחות חדשות. כל ערך אחר / לא מוגדר = סגור. מוגדר בדשבורד של Cloudflare. */
+  ALLOW_SIGNUP?: string;
+};
+
+// תקרות לכל משפחה — כדי שמשפחה אחת לא תוכל לנפח את מסד הנתונים
+const MAX_CHILDREN = 10;
+const MAX_EXAMS = 2000;
+
+const signupOpen = (env: Env) => env.ALLOW_SIGNUP?.trim().toLowerCase() === 'true';
 
 /** ה-subject של VAPID: כתובת יצירת קשר של מפעיל השרת. */
 const VAPID_SUBJECT = 'https://github.com/yedidyass/chiled_exam';
@@ -75,9 +86,13 @@ app.onError((err, c) => {
 
 app.get('/health', (c) => c.json({ ok: true }));
 
+// הגדרות ציבוריות שהאפליקציה צריכה לפני התחברות
+app.get('/config', (c) => c.json({ signupOpen: signupOpen(c.env) }));
+
 // ---------- משפחה (ללא אימות) ----------
 
 app.post('/family', async (c) => {
+  if (!signupOpen(c.env)) return c.json({ error: 'signup closed', message: 'יצירת משפחות חדשות סגורה כרגע' }, 403);
   const b = await body(c);
   const name = str(b.name, 'name', 60);
   const id = crypto.randomUUID();
@@ -162,11 +177,15 @@ function childInput(b: Record<string, unknown>) {
 app.post('/children', async (c) => {
   const input = childInput(await body(c));
   const id = crypto.randomUUID();
-  await c.env.DB.prepare(
-    'INSERT INTO children (id, family_id, name, grade, color, emoji, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  const fid = c.get('familyId');
+  // בדיקת התקרה וההוספה באותה פקודה, כדי ששתי בקשות במקביל לא יעברו אותה
+  const res = await c.env.DB.prepare(
+    `INSERT INTO children (id, family_id, name, grade, color, emoji, sort_order)
+     SELECT ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM children WHERE family_id = ?) < ?`,
   )
-    .bind(id, c.get('familyId'), input.name, input.grade, input.color, input.emoji, input.sort_order)
+    .bind(id, fid, input.name, input.grade, input.color, input.emoji, input.sort_order, fid, MAX_CHILDREN)
     .run();
+  if (!res.meta.changes) return c.json({ error: 'limit', message: `אפשר להוסיף עד ${MAX_CHILDREN} ילדים` }, 409);
   return c.json({ id, ...input, photo_v: 0 } satisfies Child, 201);
 });
 
@@ -275,12 +294,14 @@ async function examInput(c: AppCtx, b: Record<string, unknown>) {
 app.post('/exams', async (c) => {
   const input = await examInput(c, await body(c));
   const id = crypto.randomUUID();
-  await c.env.DB.prepare(
+  const fid = c.get('familyId');
+  const res = await c.env.DB.prepare(
     `INSERT INTO exams (id, family_id, child_id, subject, date, type, topics, status, score)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM exams WHERE family_id = ?) < ?`,
   )
-    .bind(id, c.get('familyId'), input.child_id, input.subject, input.date, input.type, input.topics, input.status, input.score)
+    .bind(id, fid, input.child_id, input.subject, input.date, input.type, input.topics, input.status, input.score, fid, MAX_EXAMS)
     .run();
+  if (!res.meta.changes) return c.json({ error: 'limit', message: `הגעתם למקסימום של ${MAX_EXAMS} מבחנים. מחקו מבחנים ישנים כדי להוסיף חדשים.` }, 409);
   return c.json({ id, ...input } satisfies Exam, 201);
 });
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { Snapshot } from '../../shared/types';
 import { api, ApiError } from '../api';
@@ -12,7 +12,19 @@ export default function Onboarding({
   onCreated: (token: string, s: Snapshot) => void;
   onJoin: (code: string) => void;
 }) {
-  const [mode, setMode] = useState<'create' | 'join'>('create');
+  const [mode, setMode] = useState<'create' | 'join'>('join');
+  // null = עוד לא ידוע (או אין חיבור) — מציגים את שתי האפשרויות, והשרת יכריע
+  const [signupOpen, setSignupOpen] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api.config().then(
+      (c) => {
+        setSignupOpen(c.signupOpen);
+        if (c.signupOpen) setMode('create');
+      },
+      () => setSignupOpen(null),
+    );
+  }, []);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -51,16 +63,20 @@ export default function Onboarding({
         </p>
       )}
 
-      <div className="segmented">
-        <button className={mode === 'create' ? 'on' : ''} onClick={() => (setMode('create'), setErr(''))}>
-          משפחה חדשה
-        </button>
-        <button className={mode === 'join' ? 'on' : ''} onClick={() => (setMode('join'), setErr(''))}>
-          הצטרפות
-        </button>
-      </div>
+      {signupOpen === false ? (
+        <p className="muted small">יש לכם קישור או ברקוד מבן משפחה? הדביקו אותו כאן כדי להצטרף.</p>
+      ) : (
+        <div className="segmented">
+          <button className={mode === 'create' ? 'on' : ''} onClick={() => (setMode('create'), setErr(''))}>
+            משפחה חדשה
+          </button>
+          <button className={mode === 'join' ? 'on' : ''} onClick={() => (setMode('join'), setErr(''))}>
+            הצטרפות
+          </button>
+        </div>
+      )}
 
-      {mode === 'create' ? (
+      {mode === 'create' && signupOpen !== false ? (
         <form className="form" onSubmit={create}>
           <label className="field">
             <span className="label">שם המשפחה</span>
