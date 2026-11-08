@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import { renderSVG } from 'uqr';
 import type { Snapshot } from '../../shared/types';
 import type { Actions } from '../App';
-import { ApiError } from '../api';
-import { disablePush, enablePush, getPushState, testPush } from '../push';
+import { api, ApiError } from '../api';
+import Sheet from './Sheet';
+import { currentSubscription, disablePush, enablePush, getPushState, testPush } from '../push';
 import type { PushState } from '../push';
 
 function NotificationsCard({ showToast }: { showToast: (m: string) => void }) {
@@ -91,16 +93,19 @@ export default function SettingsView({
   token,
   actions,
   onLogout,
+  onDeleted,
   showToast,
 }: {
   snap: Snapshot;
   token: string;
   actions: Actions;
   onLogout: () => void;
+  onDeleted: () => void;
   showToast: (m: string) => void;
 }) {
   const [name, setName] = useState(snap.family.name);
   const [showQr, setShowQr] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const link = `${location.origin}/#join=${token}`;
   // הברקוד תמיד כהה על רקע לבן (גם במצב כהה) כדי שמצלמות יזהו אותו
   const qrSrc = useMemo(() => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(renderSVG(link, { border: 2 })), [link]);
@@ -201,6 +206,81 @@ export default function SettingsView({
           ניתוק
         </button>
       </section>
+
+      <section className="card danger-card">
+        <h3>מחיקת המשפחה</h3>
+        <p className="muted">מוחק לצמיתות את כל הילדים, המבחנים, הציונים והתמונות, ומנתק את כל המכשירים.</p>
+        <button className="btn danger" onClick={() => setDeleting(true)}>
+          מחיקת המשפחה
+        </button>
+      </section>
+
+      {deleting && <DeleteFamilySheet snap={snap} onClose={() => setDeleting(false)} onDeleted={onDeleted} showToast={showToast} />}
     </div>
+  );
+}
+
+function DeleteFamilySheet({
+  snap,
+  onClose,
+  onDeleted,
+  showToast,
+}: {
+  snap: Snapshot;
+  onClose: () => void;
+  onDeleted: () => void;
+  showToast: (m: string) => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const matches = typed.trim() === snap.family.name.trim();
+  const count = (n: number, one: string, many: string) => (n === 1 ? one : `${n} ${many}`);
+  const parts = [
+    snap.children.length ? count(snap.children.length, 'הילד', 'הילדים') : null,
+    snap.exams.length ? count(snap.exams.length, 'המבחן', 'המבחנים') : null,
+  ].filter(Boolean);
+  const what = parts.length ? `את ${parts.join(' ואת ')}, כולל הציונים והתמונות,` : 'את כל הנתונים';
+
+  async function confirmDelete(e: FormEvent) {
+    e.preventDefault();
+    if (!matches) return;
+    setBusy(true);
+    try {
+      await api.deleteFamily();
+    } catch (err) {
+      setBusy(false);
+      showToast(err instanceof ApiError ? err.message : 'המחיקה נכשלה');
+      return;
+    }
+    // השרת כבר מחק את המנויים; מבטלים גם את המנוי בדפדפן
+    await currentSubscription()
+      .then((sub) => sub?.unsubscribe())
+      .catch(() => {});
+    onDeleted();
+  }
+
+  return (
+    <Sheet title="מחיקת המשפחה" onClose={onClose}>
+      <form className="form" onSubmit={confirmDelete}>
+        <p className="warning">
+          זה ימחק לצמיתות {what} של <b>{snap.family.name}</b>. כל המכשירים המחוברים ינותקו והתזכורות יפסיקו. אי אפשר לבטל את
+          זה.
+        </p>
+        <label className="field">
+          <span className="label">
+            להמשך, הקלידו את שם המשפחה: <b>{snap.family.name}</b>
+          </span>
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" autoFocus />
+        </label>
+        <div className="form-actions">
+          <button className="btn danger" disabled={!matches || busy}>
+            {busy ? 'מוחק…' : 'מחיקה לצמיתות'}
+          </button>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+            ביטול
+          </button>
+        </div>
+      </form>
+    </Sheet>
   );
 }
